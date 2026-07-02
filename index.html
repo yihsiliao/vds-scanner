@@ -6,16 +6,16 @@
 <title>VDS 掃描橋接</title>
 <script src="https://unpkg.com/html5-qrcode"></script>
 <style>
-  body { margin:0; padding:0; font-family:sans-serif; background:#111; color:white; }
+  body { margin:0; padding:0; font-family:sans-serif; background:#111; color:white; user-select: none; -webkit-user-select: none; }
   #reader { width:100%; }
-  #status { text-align:center; padding:14px; font-size:14px; }
+  #status { text-align:center; padding:14px; font-size:16px; font-weight: bold; background: #1a1a1a; border-bottom: 1px solid #333; }
   #list { max-height:200px; overflow-y:auto; padding:0 12px; }
-  .item { background:#222; padding:8px 12px; border-radius:8px; margin-bottom:6px; font-family:monospace; font-size:13px; }
+  .item { background:#222; padding:8px 12px; border-radius:8px; margin-bottom:6px; font-family:monospace; font-size:13px; border-left: 4px solid #8BB11B; }
   #closeBtn { display:block; width:calc(100% - 24px); margin:12px; padding:14px; background:#14442A; color:white; border:none; border-radius:10px; font-size:16px; font-weight:bold; }
 </style>
 </head>
 <body>
-  <div id="status">📷 請對準 QR Code</div>
+  <div id="status">📷 已掃描：<span id="scan-count" style="color:#8BB11B; font-size:20px;">0</span> 罐</div>
   <div id="reader"></div>
   <div id="list"></div>
   <button id="closeBtn" onclick="window.close()">完成，關閉視窗</button>
@@ -24,6 +24,31 @@
     let lastCode = null, lastTime = 0;
     const listEl = document.getElementById('list');
     const statusEl = document.getElementById('status');
+    const countEl = document.getElementById('scan-count');
+    
+    // 🌟 核心修正：建立本機掃描清單資料庫 (Set) 用來去重
+    const localScannedSet = new Set();
+
+    // 🌟 核心功能：利用瀏覽器晶片瞬發標準「嗶」聲，不卡頓、不需載入MP3
+    function playScanBeep() {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        
+        oscillator.type = 'sine'; // 正弦波，聲音最清脆
+        oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // 880Hz 高音嗶聲
+        gainNode.gain.setValueAtTime(0.12, audioCtx.currentTime); // 控制適中音量
+        
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.08); // 嗶 80 毫秒短音
+      } catch (e) {
+        console.error("音效啟動失敗 (可能需要點擊一次螢幕解鎖):", e);
+      }
+    }
 
     const scanner = new Html5Qrcode("reader");
     scanner.start(
@@ -31,24 +56,47 @@
       { fps: 10, qrbox: 230 },
       (decodedText) => {
         const code = String(decodedText).trim().toUpperCase();
+        if (!code) return;
+
+        // 1. 防抖：1.2秒內完全不重複處理任何條碼
         const now = Date.now();
         if (code === lastCode && (now - lastTime) < 1200) return;
         lastCode = code; lastTime = now;
 
-        statusEl.innerText = "✅ 已掃描：" + code;
+        // 2. 🌟 去重防護：如果同批號/同罐號已經掃過，立刻攔截！
+        if (localScannedSet.has(code)) {
+          if (navigator.vibrate) navigator.vibrate([80, 50, 80]); // 震動兩下提示重複
+          // 暫時修改文字提示，1.5秒後改回
+          const oldText = statusEl.innerHTML;
+          statusEl.innerHTML = `<span style="color:#dc3545;">⚠️ 重複掃描：${code}</span>`;
+          setTimeout(() => {
+            statusEl.innerHTML = `📷 已掃描：<span id="scan-count" style="color:#8BB11B; font-size:20px;">${localScannedSet.size}</span> 罐`;
+          }, 1500);
+          return; // ❌ 直接結束，不發送給 GAS 大視窗，也不播成功音效
+        }
+
+        // 3. 確定是新罐號，納入本機清單並更新計數 UI
+        localScannedSet.add(code);
+        document.getElementById('scan-count').innerText = localScannedSet.size;
+
+        // 4. 🌟 成功反饋：發出嗶聲 + 手機震動
+        playScanBeep();
+        if (navigator.vibrate) navigator.vibrate(60);
+
+        // 5. 新增到下方即時清單
         const div = document.createElement('div');
         div.className = 'item';
-        div.innerText = code;
+        div.innerText = `[#${localScannedSet.size}] ${code}`;
         listEl.prepend(div);
 
+        // 6. 秒傳回大視窗 (GAS 系統)
         if (window.opener) {
           window.opener.postMessage({ type: 'VDS_QR_SCAN', code: code }, '*');
         }
-        if (navigator.vibrate) navigator.vibrate(60);
       },
       () => {}
     ).catch(err => {
-      statusEl.innerText = "⚠️ 無法啟動相機：" + err;
+      statusEl.innerHTML = `<span style="color:#dc3545;">⚠️ 無法啟動相機：${err}</span>`;
     });
 
     window.addEventListener('beforeunload', () => {
