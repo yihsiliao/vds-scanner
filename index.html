@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VDS 掃描橋接</title>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<style>
+  body { margin:0; padding:0; font-family:sans-serif; background:#111; color:white; }
+  #reader { width:100%; }
+  #status { text-align:center; padding:14px; font-size:14px; }
+  #list { max-height:200px; overflow-y:auto; padding:0 12px; }
+  .item { background:#222; padding:8px 12px; border-radius:8px; margin-bottom:6px; font-family:monospace; font-size:13px; }
+  #closeBtn { display:block; width:calc(100% - 24px); margin:12px; padding:14px; background:#14442A; color:white; border:none; border-radius:10px; font-size:16px; font-weight:bold; }
+</style>
+</head>
+<body>
+  <div id="status">📷 請對準 QR Code</div>
+  <div id="reader"></div>
+  <div id="list"></div>
+  <button id="closeBtn" onclick="window.close()">完成，關閉視窗</button>
+
+  <script>
+    let lastCode = null, lastTime = 0;
+    const listEl = document.getElementById('list');
+    const statusEl = document.getElementById('status');
+
+    const scanner = new Html5Qrcode("reader");
+    scanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: 230 },
+      (decodedText) => {
+        const code = String(decodedText).trim().toUpperCase();
+        const now = Date.now();
+        if (code === lastCode && (now - lastTime) < 1200) return;
+        lastCode = code; lastTime = now;
+
+        statusEl.innerText = "✅ 已掃描：" + code;
+        const div = document.createElement('div');
+        div.className = 'item';
+        div.innerText = code;
+        listEl.prepend(div);
+
+        if (window.opener) {
+          window.opener.postMessage({ type: 'VDS_QR_SCAN', code: code }, '*');
+        }
+        if (navigator.vibrate) navigator.vibrate(60);
+      },
+      () => {}
+    ).catch(err => {
+      statusEl.innerText = "⚠️ 無法啟動相機：" + err;
+    });
+
+    window.addEventListener('beforeunload', () => {
+      if (window.opener) window.opener.postMessage({ type: 'VDS_QR_CLOSED' }, '*');
+    });
+  </script>
+</body>
+</html>
