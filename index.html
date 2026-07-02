@@ -8,19 +8,19 @@
 <style>
   body { margin:0; padding:0; font-family:sans-serif; background:#111; color:white; user-select: none; -webkit-user-select: none; }
   #reader { width:100%; }
-  #status { text-align:center; padding:14px; font-size:15px; font-weight: bold; background: #14442A; border-bottom: 1px solid #333; transition: background 0.3s; }
+  #status { text-align:center; padding:14px; font-size:15px; font-weight: bold; background: #14442A; border-bottom: 1px solid #333; transition: background 0.2s; }
   #list { max-height:200px; overflow-y:auto; padding:0 12px; margin-top: 10px; }
   .item { background:#222; padding:10px 12px; border-radius:8px; margin-bottom:6px; font-family:monospace; font-size:13px; border-left: 4px solid #8BB11B; display: flex; justify-content: space-between; }
   #closeBtn { display:block; width:calc(100% - 24px); margin:12px; padding:14px; background:#222; color:white; border:1px solid #444; border-radius:10px; font-size:16px; font-weight:bold; }
-  #audio-unlock-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 20px; cursor: pointer; }
+  #audio-unlock-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 20px; cursor: pointer; }
 </style>
 </head>
 <body>
 
   <div id="audio-unlock-overlay" onclick="unlockAudio()">
-    <div style="font-size: 50px; margin-bottom: 15px;">🔊</div>
-    <div style="font-size: 18px; font-weight: 900; margin-bottom: 8px;">請點擊畫面任意處</div>
-    <div style="font-size: 13px; color: #aaa;">以解鎖 iPhone 相機掃描音效提示</div>
+    <div style="font-size: 50px; margin-bottom: 15px;">📢</div>
+    <div style="font-size: 18px; font-weight: 900; margin-bottom: 8px;">點擊畫面任意處開始</div>
+    <div style="font-size: 13px; color: #999;">解鎖 iPhone LINE / Safari 限制的掃描嗶聲</div>
   </div>
 
   <div id="status">📷 請將相機對準標籤 QR Code</div>
@@ -34,72 +34,68 @@
     const statusEl = document.getElementById('status');
     
     const localScannedSet = new Set();
+    const pendingSet = new Set(); // 核心防撞牆：記錄正在審查中的條碼
     let audioCtx = null;
 
-    // 🌟 iPhone 專用音訊解鎖函式
+    // 解鎖蘋果音訊限制
     function unlockAudio() {
       try {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') {
-          audioCtx.resume();
-        }
-        // 播放一個極短的靜音，促使 iOS 核心放行
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        // 發送極短靜音解鎖
         const osc = audioCtx.createOscillator();
         osc.connect(audioCtx.destination);
         osc.start(0); osc.stop(0.01);
         
-        // 隱藏解鎖層
         document.getElementById('audio-unlock-overlay').style.display = 'none';
         if (navigator.vibrate) navigator.vibrate(40);
       } catch(e) { console.error(e); }
     }
 
-    // 🔊 瞬發標準「嗶」聲 (成功音效)
+    // 🔊 成功嗶聲 (高頻清脆)
     function playSuccessBeep() {
       if (!audioCtx) return;
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.connect(gain); gain.connect(audioCtx.destination);
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(988, audioCtx.currentTime); // B5 高音
+      osc.frequency.setValueAtTime(1046.5, audioCtx.currentTime); // C6 高音
       gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
       osc.start(); osc.stop(audioCtx.currentTime + 0.08);
     }
 
-    // 🔊 瞬發低沉「嗡」聲 (失敗/重複警告音效)
+    // 🔊 警告嗡聲 (低頻刺耳)
     function playErrorBuzz() {
       if (!audioCtx) return;
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.connect(gain); gain.connect(audioCtx.destination);
-      osc.type = 'sawtooth'; // 鋸齒波，聽起來有刺耳警告感
-      osc.frequency.setValueAtTime(150, audioCtx.currentTime); // 低頻
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(130, audioCtx.currentTime); 
       gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-      osc.start(); osc.stop(audioCtx.currentTime + 0.25); // 聲音拉長
+      osc.start(); osc.stop(audioCtx.currentTime + 0.25);
     }
 
-    // 📷 啟動相機
     const scanner = new Html5Qrcode("reader");
     scanner.start(
       { facingMode: "environment" },
-      { fps: 10, qrbox: 230 },
+      { fps: 12, qrbox: 230 },
       (decodedText) => {
         const code = String(decodedText).trim().toUpperCase();
         if (!code) return;
 
+        // 雙重鎖定：如果已經掃過，或是大視窗「正在審查中」，相機再怎麼拍都直接無視
+        if (localScannedSet.has(code) || pendingSet.has(code)) return;
+
         const now = Date.now();
-        if (code === lastCode && (now - lastTime) < 1500) return; // 提高防抖間隔至 1.5 秒
+        if (code === lastCode && (now - lastTime) < 1200) return;
         lastCode = code; lastTime = now;
 
-        // A. 本地重複防護
-        if (localScannedSet.has(code)) {
-          triggerLocalError(`⚠️ 本次已掃描過：${code}`);
-          return;
-        }
+        // 納入審查鎖定，防止相機重刷
+        pendingSet.add(code);
 
-        // B. 🌟 進入「審查階段」：不嗶聲、不進清單，立刻秒傳給 GAS 後台核對
         statusEl.style.background = "#f57f17";
-        statusEl.innerText = `🔍 雲端驗證中：${code}`;
+        statusEl.innerText = `🔍 正在核對身分...`;
 
         if (window.opener) {
           window.opener.postMessage({ type: 'VDS_QR_SCAN', code: code }, '*');
@@ -111,19 +107,22 @@
       statusEl.innerText = "⚠️ 無法啟動相機：" + err;
     });
 
-    // 🌟 監聽大視窗 (GAS) 傳回來的審查結果
+    // 接收大視窗秒殺比對的結果
     window.addEventListener('message', (event) => {
       if (!event.data) return;
       const msg = event.data;
 
+      // 解除審查鎖定
+      if (msg.code) pendingSet.delete(msg.code);
+
       if (msg.type === 'VDS_QR_APPROVED') {
-        // ✅ 驗證通過！允許匯入
+        // ✅ 通過驗證！加入清單
         localScannedSet.add(msg.code);
         playSuccessBeep();
         if (navigator.vibrate) navigator.vibrate(60);
 
         statusEl.style.background = "#14442A";
-        statusEl.innerHTML = `📷 已核對加入：<span style="font-size:20px;color:#8BB11B;">${localScannedSet.size}</span> 罐`;
+        statusEl.innerHTML = `📷 已掃描計數：<span style="font-size:20px;color:#8BB11B;">${localScannedSet.size}</span> 罐`;
 
         const div = document.createElement('div');
         div.className = 'item';
@@ -131,17 +130,13 @@
         listEl.prepend(div);
 
       } else if (msg.type === 'VDS_QR_REJECTED') {
-        // ❌ 驗證失敗！已被其他地塊使用
-        triggerLocalError(`❌ 拒絕匯入：${msg.reason}`);
+        // ❌ 被大視窗拒絕（重複或無資料）
+        playErrorBuzz();
+        if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+        statusEl.style.background = "#dc3545";
+        statusEl.innerText = msg.reason;
       }
     });
-
-    function triggerLocalError(errorText) {
-      playErrorBuzz();
-      if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
-      statusEl.style.background = "#dc3545";
-      statusEl.innerText = errorText;
-    }
 
     window.addEventListener('beforeunload', () => {
       if (window.opener) window.opener.postMessage({ type: 'VDS_QR_CLOSED' }, '*');
