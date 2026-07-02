@@ -107,27 +107,38 @@
       statusEl.innerText = "⚠️ 無法啟動相機：" + err;
     });
 
-    // 接收大視窗秒殺比對的結果
+    // 🌟 接收大視窗秒殺比對的結果（已升級：支援整箱 unpacked 批量計數與解鎖）
     window.addEventListener('message', (event) => {
       if (!event.data) return;
       const msg = event.data;
 
-      // 解除審查鎖定
-      if (msg.code) pendingSet.delete(msg.code);
+      // 智慧解鎖相機防撞牆
+      if (msg.clearCode) pendingSet.delete(msg.clearCode);
+      else if (msg.code) pendingSet.delete(msg.code);
 
       if (msg.type === 'VDS_QR_APPROVED') {
-        // ✅ 通過驗證！加入清單
-        localScannedSet.add(msg.code);
+        // ✅ 通過驗證！提取大視窗拆解回傳的罐號陣列，若無則降級使用單一條碼
+        const codesToAdd = msg.unpackedCodes || [msg.code];
+        
+        // 逐一將小罐罐號塞入手機畫面
+        codesToAdd.forEach(cId => {
+          if (!localScannedSet.has(cId)) {
+            localScannedSet.add(cId);
+            
+            const div = document.createElement('div');
+            div.className = 'item';
+            div.innerHTML = `<span>[#${localScannedSet.size}] ${cId}</span><small style="color:#8BB11B;">${msg.variety || ''}</small>`;
+            listEl.prepend(div);
+          }
+        });
+
+        // 🔊 發出一次清脆的成功嗶聲並震動
         playSuccessBeep();
         if (navigator.vibrate) navigator.vibrate(60);
 
+        // 🌟 關鍵修正：即時計數改為反映「localScannedSet.size (總小罐數)」，完美呈現真實領用罐數！
         statusEl.style.background = "#14442A";
         statusEl.innerHTML = `📷 已掃描計數：<span style="font-size:20px;color:#8BB11B;">${localScannedSet.size}</span> 罐`;
-
-        const div = document.createElement('div');
-        div.className = 'item';
-        div.innerHTML = `<span>[#${localScannedSet.size}] ${msg.code}</span><small style="color:#8BB11B;">${msg.variety || ''}</small>`;
-        listEl.prepend(div);
 
       } else if (msg.type === 'VDS_QR_REJECTED') {
         // ❌ 被大視窗拒絕（重複或無資料）
