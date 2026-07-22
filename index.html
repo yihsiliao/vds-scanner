@@ -25,6 +25,15 @@
 
   <div id="status">📷 請將相機對準標籤 QR Code</div>
   <div id="reader"></div>
+  <!-- 🌟 新增：手動輸入區塊 -->
+  <div style="display: flex; gap: 8px; margin: 12px;">
+    <input type="text" id="manualInput" placeholder="QR 模糊？請直接輸入序號" 
+           style="flex: 1; padding: 12px; border-radius: 8px; border: none; font-size: 14px; outline: none; text-transform: uppercase;">
+    <button onclick="submitManual()" 
+            style="padding: 10px 15px; background: #8BB11B; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">
+      新增
+    </button>
+  </div>
   <div id="list"></div>
   <button id="closeBtn" onclick="window.close()">完成，關閉視窗</button>
 
@@ -147,6 +156,39 @@
         if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
         statusEl.style.background = "#dc3545";
         statusEl.innerText = msg.reason;
+      }
+    });
+
+    // 🌟 新增：處理手動輸入的邏輯 (完全共用相機掃描的防撞牆與驗證流程)
+    function submitManual() {
+      const inputEl = document.getElementById('manualInput');
+      const code = String(inputEl.value).trim().toUpperCase();
+      if (!code) return;
+
+      // 雙重鎖定：檢查是否已經掃過或正在審查中
+      if (localScannedSet.has(code) || pendingSet.has(code)) {
+        inputEl.value = ''; // 清空輸入框
+        return;
+      }
+
+      // 納入審查鎖定
+      pendingSet.add(code);
+      statusEl.style.background = "#f57f17";
+      statusEl.innerText = `🔍 正在核對身分...`;
+
+      // 傳送給母視窗的驗證引擎
+      if (window.opener) {
+        window.opener.postMessage({ type: 'VDS_QR_SCAN', code: code }, '*');
+      }
+      
+      inputEl.value = ''; // 送出後自動清空輸入框，方便連續輸入
+    }
+
+    // 🌟 新增：支援手機小鍵盤按下 Enter (前往/Go) 時直接送出
+    document.getElementById('manualInput').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        submitManual();
       }
     });
 
