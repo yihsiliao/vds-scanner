@@ -35,7 +35,7 @@
     </button>
   </div>
   <div id="list"></div>
-  <button id="closeBtn" onclick="window.close()">完成，關閉視窗</button>
+  <button id="closeBtn" onclick="closeScannerWindow()">完成，關閉視窗</button>
 
   <script>
     let lastCode = null, lastTime = 0;
@@ -43,38 +43,32 @@
     const statusEl = document.getElementById('status');
     
     const localScannedSet = new Set();
-    const pendingSet = new Set(); // 核心防撞牆：記錄正在審查中的條碼
+    const pendingSet = new Set(); 
     let audioCtx = null;
 
-    // 解鎖蘋果音訊限制
     function unlockAudio() {
       try {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         if (audioCtx.state === 'suspended') audioCtx.resume();
-        // 發送極短靜音解鎖
         const osc = audioCtx.createOscillator();
         osc.connect(audioCtx.destination);
         osc.start(0); osc.stop(0.01);
-        
         document.getElementById('audio-unlock-overlay').style.display = 'none';
         if (navigator.vibrate) navigator.vibrate(40);
       } catch(e) { console.error(e); }
     }
 
-    // 🔊 成功嗶聲 (高頻清脆)
     function playSuccessBeep() {
       if (!audioCtx) return;
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.connect(gain); gain.connect(audioCtx.destination);
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(1046.5, audioCtx.currentTime); // C6 高音
+      osc.frequency.setValueAtTime(1046.5, audioCtx.currentTime); 
       gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
       osc.start(); osc.stop(audioCtx.currentTime + 0.08);
     }
-
     
-    // 🔊 警告嗡聲 (低頻刺耳)
     function playErrorBuzz() {
       if (!audioCtx) return;
       const osc = audioCtx.createOscillator();
@@ -86,24 +80,22 @@
       osc.start(); osc.stop(audioCtx.currentTime + 0.25);
     }
 
+    // 🌟 降低 FPS 到 10，減輕手機 CPU 負擔防止發熱當機
     const scanner = new Html5Qrcode("reader");
     scanner.start(
       { facingMode: "environment" },
-      { fps: 12, qrbox: 230 },
+      { fps: 10, qrbox: 230 }, 
       (decodedText) => {
         const code = String(decodedText).trim().toUpperCase();
         if (!code) return;
 
-        // 雙重鎖定：如果已經掃過，或是大視窗「正在審查中」，相機再怎麼拍都直接無視
         if (localScannedSet.has(code) || pendingSet.has(code)) return;
 
         const now = Date.now();
         if (code === lastCode && (now - lastTime) < 1200) return;
         lastCode = code; lastTime = now;
 
-        // 納入審查鎖定，防止相機重刷
         pendingSet.add(code);
-
         statusEl.style.background = "#f57f17";
         statusEl.innerText = `🔍 正在核對身分...`;
 
@@ -117,41 +109,29 @@
       statusEl.innerText = "⚠️ 無法啟動相機：" + err;
     });
 
-    // 🌟 接收大視窗秒殺比對的結果（已升級：支援整箱 unpacked 批量計數與解鎖）
     window.addEventListener('message', (event) => {
       if (!event.data) return;
       const msg = event.data;
 
-      // 智慧解鎖相機防撞牆
       if (msg.clearCode) pendingSet.delete(msg.clearCode);
       else if (msg.code) pendingSet.delete(msg.code);
 
       if (msg.type === 'VDS_QR_APPROVED') {
-        // ✅ 通過驗證！提取大視窗拆解回傳的罐號陣列，若無則降級使用單一條碼
         const codesToAdd = msg.unpackedCodes || [msg.code];
-        
-        // 逐一將小罐罐號塞入手機畫面
         codesToAdd.forEach(cId => {
           if (!localScannedSet.has(cId)) {
             localScannedSet.add(cId);
-            
             const div = document.createElement('div');
             div.className = 'item';
             div.innerHTML = `<span>[#${localScannedSet.size}] ${cId}</span><small style="color:#8BB11B;">${msg.variety || ''}</small>`;
             listEl.prepend(div);
           }
         });
-
-        // 🔊 發出一次清脆的成功嗶聲並震動
         playSuccessBeep();
         if (navigator.vibrate) navigator.vibrate(60);
-
-        // 🌟 關鍵修正：即時計數改為反映「localScannedSet.size (總小罐數)」，完美呈現真實領用罐數！
         statusEl.style.background = "#14442A";
         statusEl.innerHTML = `📷 已掃描計數：<span style="font-size:20px;color:#8BB11B;">${localScannedSet.size}</span> 罐`;
-
       } else if (msg.type === 'VDS_QR_REJECTED') {
-        // ❌ 被大視窗拒絕（重複或無資料）
         playErrorBuzz();
         if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
         statusEl.style.background = "#dc3545";
@@ -159,32 +139,26 @@
       }
     });
 
-    // 🌟 新增：處理手動輸入的邏輯 (完全共用相機掃描的防撞牆與驗證流程)
     function submitManual() {
       const inputEl = document.getElementById('manualInput');
       const code = String(inputEl.value).trim().toUpperCase();
       if (!code) return;
 
-      // 雙重鎖定：檢查是否已經掃過或正在審查中
       if (localScannedSet.has(code) || pendingSet.has(code)) {
-        inputEl.value = ''; // 清空輸入框
+        inputEl.value = ''; 
         return;
       }
 
-      // 納入審查鎖定
       pendingSet.add(code);
       statusEl.style.background = "#f57f17";
       statusEl.innerText = `🔍 正在核對身分...`;
 
-      // 傳送給母視窗的驗證引擎
       if (window.opener) {
         window.opener.postMessage({ type: 'VDS_QR_SCAN', code: code }, '*');
       }
-      
-      inputEl.value = ''; // 送出後自動清空輸入框，方便連續輸入
+      inputEl.value = ''; 
     }
 
-    // 🌟 新增：支援手機小鍵盤按下 Enter (前往/Go) 時直接送出
     document.getElementById('manualInput').addEventListener('keydown', function(e) {
       if (e.key === 'Enter') {
         e.preventDefault();
@@ -192,8 +166,35 @@
       }
     });
 
+    // 🌟 2. 核心防當機：安全關閉相機資源函式
+    let isClosing = false;
+    function closeScannerWindow() {
+      if (isClosing) return;
+      isClosing = true;
+      statusEl.style.background = "#333";
+      statusEl.innerText = "🛑 正在安全關閉相機...";
+      
+      try {
+        if (scanner && scanner.isScanning) {
+          scanner.stop().then(() => {
+            scanner.clear();
+            window.close();
+          }).catch(() => { window.close(); });
+        } else {
+          if (scanner) scanner.clear();
+          window.close();
+        }
+      } catch(e) {
+        window.close();
+      }
+    }
+
+    // 🌟 3. 雙重保險：使用者如果直接滑掉視窗，也要嘗試關閉相機
     window.addEventListener('beforeunload', () => {
       if (window.opener) window.opener.postMessage({ type: 'VDS_QR_CLOSED' }, '*');
+      try { 
+        if (scanner && scanner.isScanning) { scanner.stop(); scanner.clear(); } 
+      } catch(e) {}
     });
   </script>
 </body>
